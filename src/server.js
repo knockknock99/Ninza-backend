@@ -12,7 +12,6 @@ app.use(cors());
 app.post('*', bodyParser.json({ limit: '1mb' }));
 app.put('*', bodyParser.json({ limit: '1mb' }));
 
-
 // MongoDB connection
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
@@ -28,27 +27,27 @@ const otpStore = {};
 
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-      console.error('Bad JSON:', err.message);
-      return res.status(400).json({ success: false, message: 'Invalid JSON format' });
+    console.error('Bad JSON:', err.message);
+    return res.status(400).json({ success: false, message: 'Invalid JSON format' });
   }
   next();
 });
 
 // Nodemailer transporter setup for SMTP
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASSWORD
-    }
-  });
-  
+  host: process.env.SMTP_HOST,
+  port: process.env.SMTP_PORT,
+  secure: true, // true for 465, false for other ports
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASSWORD
+  }
+});
+
 // API to send OTP
 app.post('/api/send-otp', (req, res) => {
-    console.log(req.body,"-------------------------------------");
-    console.log(process.env.SMTP_PORT,"-------------------------------------");
-
-    
+  console.log(req.body, "-------------------------------------");
+  console.log(process.env.SMTP_PORT, "-------------------------------------");
   let email = req.body.email;
 
   if (!email) {
@@ -60,45 +59,42 @@ app.post('/api/send-otp', (req, res) => {
 
   // Store the OTP and expiration time (5 minutes)
   otpStore[email] = { otp, expiresAt: Date.now() + 5 * 60 * 1000 };
-    console.log("otpStore-------------", otpStore);
+  console.log("otpStore-------------", otpStore);
 
   // Email content
   const mailOptions = {
-    from: process.env.SMTP_USER,
+    from: process.env.FROM_EMAIL,
     to: email,
     subject: 'Your OTP Code',
     text: `Your OTP code is: ${otp}. This code is valid for 5 minutes.`,
   };
   console.log("mailoptions", mailOptions);
-  
 
-// Send the email
-    transporter.sendMail(mailOptions, (error, info) => {
-        if (error) {
-        console.error('Error sending email:', error);
-        return res.status(500).json({ success: false, message: 'Failed to send OTP' });
-        }
-        console.log(`OTP sent to ${email}: ${otp}`);
-        res.json({ success: true, message: 'OTP sent successfully' });
-    });
+  // Send the email
+  transporter.sendMail(mailOptions, (error, info) => {
+    if (error) {
+      console.error('Error sending email:', error);
+      return res.status(500).json({ success: false, message: 'Failed to send OTP' });
+    }
+    console.log(`OTP sent to ${email}: ${otp}`);
+    res.json({ success: true, message: 'OTP sent successfully' });
+  });
 });
 
 // API to verify OTP
 app.post('/api/verify-otp', (req, res) => {
-    console.log(req.body, "body--------------");
-    
+  console.log(req.body, "body--------------");
   let { email, otp } = req.body;
-    console.log(email,"----------------", otp);
-    
+  console.log(email, "----------------", otp);
+
   if (!email || !otp) {
     return res.status(400).json({ success: false, message: 'Email and OTP are required' });
   }
 
   const record = otpStore[email];
-  console.log(record.otp,"record--------");
-  console.log(otp,"otp--------");
+  console.log(record.otp, "record--------");
+  console.log(otp, "otp--------");
 
-  
   if (!record) {
     return res.status(400).json({ success: false, message: 'OTP not requested for this email' });
   }
@@ -110,7 +106,6 @@ app.post('/api/verify-otp', (req, res) => {
 
   if (record.otp == otp) {
     console.log('otp matched-----------------------');
-    
     delete otpStore[email];
     return res.json({ success: true, message: 'OTP verified successfully' });
   } else {
@@ -123,32 +118,32 @@ app.get('/api/profile/:userId', (req, res) => {
 
   // Hardcoded profile data
   const profileData = {
-      id: userId,
-      Name: 'John Doe',
-      Email: 'johndoe@example.com',
-      Phone: '1234567890',
-      user_type: 'Player',
-      Wallet_balance: 150.75,
-      hold_balance: 20.50,
-      referral_code: 'REF12345',
-      referral_earning: 50.00,
-      avatar: 'https://example.com/images/avatar1.png',
-      lastLogin: '2024-12-05T10:15:30Z',
-      userStatus: 'unblock',
-      Permissions: [
-          { Permission: 'Create Game', Status: true },
-          { Permission: 'Join Tournament', Status: true },
-          { Permission: 'Withdraw Funds', Status: false },
-      ],
-      totalDeposit: 500.00,
-      totalWithdrawl: 200.00,
-      misc_amount: 5.00,
+    id: userId,
+    Name: 'John Doe',
+    Email: 'johndoe@example.com',
+    Phone: '1234567890',
+    user_type: 'Player',
+    Wallet_balance: 150.75,
+    hold_balance: 20.50,
+    referral_code: 'REF12345',
+    referral_earning: 50.00,
+    avatar: 'https://example.com/images/avatar1.png',
+    lastLogin: '2024-12-05T10:15:30Z',
+    userStatus: 'unblock',
+    Permissions: [
+      { Permission: 'Create Game', Status: true },
+      { Permission: 'Join Tournament', Status: true },
+      { Permission: 'Withdraw Funds', Status: false },
+    ],
+    totalDeposit: 500.00,
+    totalWithdrawl: 200.00,
+    misc_amount: 5.00,
   };
 
   // Send response with hardcoded profile data
   res.json({
-      success: true,
-      data: profileData
+    success: true,
+    data: profileData
   });
 });
 
@@ -228,10 +223,6 @@ app.get('/api/getTournament', (req, res) => {
   // Send response with dummy data
   res.json({ success: true, data: tournamentData });
 });
-   
-
-
-
 
 const PORT = 5000;
 app.listen(PORT, () => {
