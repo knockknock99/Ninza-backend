@@ -4,34 +4,47 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const nodemailer = require('nodemailer');
 const mongoose = require('mongoose');
+const User = require('./models/User'); 
+const Transaction = require('./models/Transaction');
 
+// dotenv.config();
 const app = express();
+const PORT = 3000;
+app.use(express.json());
 app.use(cors());
-// app.use(bodyParser.json()); // Global JSON parser for all routes
+
 // Apply body-parser JSON parsing to POST and PUT requests only
 app.post('*', bodyParser.json({ limit: '1mb' }));
 app.put('*', bodyParser.json({ limit: '1mb' }));
 
 // MongoDB connection
-mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-}).then(() => {
-  console.log('Connected to MongoDB');
-}).catch((error) => {
-  console.error('Error connecting to MongoDB:', error.message);
-});
+const mongoURI = process.env.MONGO_URI; // MongoDB URI from the .env file
+
+mongoose
+  .connect(mongoURI, { useNewUrlParser: true, useUnifiedTopology: true })
+  .then(async () => {
+    console.log('MongoDB connected');
+    
+    // Log database name
+    console.log('Connected to DB:', mongoose.connection.name);
+
+    // Log the collections in the database
+    const collections = await mongoose.connection.db.listCollections().toArray();
+    console.log('Collections:', collections.map(collection => collection.name));
+  })
+  .catch(err => console.error('Error connecting to MongoDB:', err));
+
 
 // Temporary in-memory OTP store
 const otpStore = {};
 
-app.use((err, req, res, next) => {
-  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-    console.error('Bad JSON:', err.message);
-    return res.status(400).json({ success: false, message: 'Invalid JSON format' });
-  }
-  next();
-});
+// app.use((err, req, res, next) => {
+//   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+//     console.error('Bad JSON:', err.message);
+//     return res.status(400).json({ success: false, message: 'Invalid JSON format' });
+//   }
+//   next();
+// });
 
 // Nodemailer transporter setup for SMTP
 const transporter = nodemailer.createTransport({
@@ -113,76 +126,55 @@ app.post('/api/verify-otp', (req, res) => {
   }
 });
 
-app.get('/api/profile/:userId', (req, res) => {
-  const { userId } = req.params;
+// API to fetch User data by custom 'id'
+app.get('/api/users/byId/:id', async (req, res) => {
+  const { id } = req.params; 
+  console.log('Requested User ID:', id);  
 
-  // Hardcoded profile data
-  const profileData = {
-    id: userId,
-    Name: 'John Doe',
-    Email: 'johndoe@example.com',
-    Phone: '1234567890',
-    user_type: 'Player',
-    Wallet_balance: 150.75,
-    hold_balance: 20.50,
-    referral_code: 'REF12345',
-    referral_earning: 50.00,
-    avatar: 'https://example.com/images/avatar1.png',
-    lastLogin: '2024-12-05T10:15:30Z',
-    userStatus: 'unblock',
-    Permissions: [
-      { Permission: 'Create Game', Status: true },
-      { Permission: 'Join Tournament', Status: true },
-      { Permission: 'Withdraw Funds', Status: false },
-    ],
-    totalDeposit: 500.00,
-    totalWithdrawl: 200.00,
-    misc_amount: 5.00,
-  };
+  try {
+    // Log the query format to ensure correct data is being passed
+    console.log('Querying Database for id:', id);  // Log the id being queried
 
-  // Send response with hardcoded profile data
-  res.json({
-    success: true,
-    data: profileData
-  });
+    // Query the database using 'id' field from your schema
+    const user = await User.findOne({ id: id });
+
+    console.log('Query Result:', user);  // Log the result of the query
+
+    if (user) {
+      res.status(200).json({ success: true, data: user });
+    } else {
+      console.log('User not found for id:', id);
+      res.status(404).json({ success: false, message: 'User not found' });
+    }
+  } catch (err) {
+    console.error('Error fetching user by id:', err);
+    res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
 });
 
-app.get('/api/getTransactionHistory', (req, res) => {
-  // Dummy transaction history data
-  const transactionHistory = [
-    {
-      id: 101,
-      date: '2024-12-01',
-      amount: 150.5,
-      type: 'Credit',
-      description: 'Salary Payment',
-    },
-    {
-      id: 102,
-      date: '2024-12-03',
-      amount: -50.0,
-      type: 'Debit',
-      description: 'Grocery Shopping',
-    },
-    {
-      id: 103,
-      date: '2024-12-05',
-      amount: 200.0,
-      type: 'Credit',
-      description: 'Freelance Project Payment',
-    },
-    {
-      id: 104,
-      date: '2024-12-06',
-      amount: -20.0,
-      type: 'Debit',
-      description: 'Coffee Shop',
-    },
-  ];
 
-  // Send response with dummy data
-  res.json({ success: true, data: transactionHistory });
+app.get('/api/transactions', async (req, res) => {
+  try {
+    // Fetch the first document in the collection (assuming there's only one document)
+    const transactions = await Transaction.findOne();
+
+    // Log the fetched data for debugging
+    console.log('Fetched data from database:', transactions);
+
+    // Check if data exists and return it; otherwise, respond with "not found"
+    if (transactions) {
+      res.status(200).json(transactions);
+    } else {
+      console.log('No transactions found in the database.');
+      res.status(404).json({ success: false, message: 'No transactions found' });
+    }
+  } catch (err) {
+    // Log the error and respond with a 500 status code
+    console.error('Error fetching transactions:', err);
+    res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
 });
+
 
 app.get('/api/getGame', (req, res) => {
   // Dummy game data
@@ -224,7 +216,7 @@ app.get('/api/getTournament', (req, res) => {
   res.json({ success: true, data: tournamentData });
 });
 
-const PORT = 5000;
+// Start the server
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+  console.log(`Server running on http://localhost:${PORT}`);
 });
