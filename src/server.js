@@ -6,10 +6,12 @@ const nodemailer = require('nodemailer');
 const mongoose = require('mongoose');
 const User = require('./models/User'); 
 const Transaction = require('./models/Transaction');
+const Game = require('./models/games')
+const Counter = require('./models/counter'); // Counter model for sequential IDs
 
 // dotenv.config();
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(cors());
 
@@ -35,9 +37,6 @@ mongoose
   .catch(err => console.error('Error connecting to MongoDB:', err));
 
 
-// Temporary in-memory OTP store
-const otpStore = {};
-
 // app.use((err, req, res, next) => {
 //   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
 //     console.error('Bad JSON:', err.message);
@@ -57,76 +56,112 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// API to send OTP
-app.post('/api/send-otp', (req, res) => {
-  console.log(req.body, "-------------------------------------");
-  console.log(process.env.SMTP_PORT, "-------------------------------------");
-  let email = req.body.email;
+app.post('/api/send-otp', async (req, res) => {
+  const { phone } = req.body;
 
-  if (!email) {
-    return res.status(400).json({ success: false, message: 'Email is required' });
+  if (!phone) {
+    return res.status(400).json({ success: false, message: 'Phone number is required' });
   }
 
-  // Generate a random 6-digit OTP
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  try {
+    // Check if the user exists by phone number
+    let user = await User.findOne({ phone });
 
-  // Store the OTP and expiration time (5 minutes)
-  otpStore[email] = { otp, expiresAt: Date.now() + 5 * 60 * 1000 };
-  console.log("otpStore-------------", otpStore);
-
-  // Email content
-  const mailOptions = {
-    from: process.env.FROM_EMAIL,
-    to: email,
-    subject: 'Your OTP Code',
-    text: `Your OTP code is: ${otp}. This code is valid for 5 minutes.`,
-  };
-  console.log("mailoptions", mailOptions);
-
-  // Send the email
-  transporter.sendMail(mailOptions, (error, info) => {
-    if (error) {
-      console.error('Error sending email:', error);
-      return res.status(500).json({ success: false, message: 'Failed to send OTP' });
+    if (user) {
+      // User exists, return the existing OTP
+      const otp = user.activeOtp;
+      console.log(`OTP sent to ${phone}: ${otp}`);
+      return res.json({ success: true, message: 'OTP sent successfully', data: user });
     }
-    console.log(`OTP sent to ${email}: ${otp}`);
-    res.json({ success: true, message: 'OTP sent successfully' });
-  });
+
+    // Generate a new OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Fetch or increment the counter for sequential IDs
+    let counter = await Counter.findOneAndUpdate(
+      { collectionName: 'Users' },
+      { $inc: { sequenceValue: 1 } },
+      { new: true, upsert: true } // Create the counter if it doesn't exist
+    );
+
+    const newId = counter.sequenceValue.toString().padStart(3, '0'); // Format ID as "001", "002", etc.
+
+    // Create a new user record
+    const newUser = new User({
+      id: newId,        // Use the sequential ID
+      phone,            // Save the phone number
+      activeOtp: otp,   // Save the OTP
+      user_type: 'Player', // Default values for new users
+      wallet_balance: 0,
+      hold_balance: 0,
+      referral_code: 'REF' + Math.floor(Math.random() * 100000),
+      referral_earning: 0,
+      avatar: 'https://example.com/images/default-avatar.png',
+      lastLogin: new Date(),
+      userStatus: 'unblock',
+      permissions: [
+        "Create Game", "Join Tournament", "Withdraw Funds"
+      ],
+      totalDeposit: 0,
+      totalWithdrawl: 0,
+      misc_amount: 0
+    });
+
+    console.log("New user data before saving:", newUser);
+
+    // Save the new user to the database
+    await newUser.save();
+
+    // Log the OTP for testing
+    console.log(`OTP sent to ${phone}: ${otp}`);
+
+    // Return success response
+    res.json({ success: true, message: 'OTP sent successfully', data: { isNewUser: 1 } });
+  } catch (err) {
+    console.error('Error processing OTP request:', err);
+    res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
 });
 
 // API to verify OTP
-app.post('/api/verify-otp', (req, res) => {
-  console.log(req.body, "body--------------");
-  let { email, otp } = req.body;
-  console.log(email, "----------------", otp);
+app.post('/api/verify-otp', async (req, res) => {
+  const { phone, otp } = req.body;
 
-  if (!email || !otp) {
-    return res.status(400).json({ success: false, message: 'Email and OTP are required' });
+  // Validate input
+  if (!phone || !otp) {
+    return res.status(400).json({ success: false, message: 'Phone and OTP are required' });
   }
 
-  const record = otpStore[email];
-  console.log(record.otp, "record--------");
-  console.log(otp, "otp--------");
+  try {
+    // Find the user by phone
+    const user = await User.findOne({ phone });
 
-  if (!record) {
-    return res.status(400).json({ success: false, message: 'OTP not requested for this email' });
-  }
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
 
-  if (Date.now() > record.expiresAt) {
-    delete otpStore[email];
-    return res.status(400).json({ success: false, message: 'OTP has expired' });
-  }
+    // Check if the OTP matches
+    if (user.activeOtp !== otp) {
+      return res.status(400).json({ success: false, message: 'Invalid OTP' });
+    }
 
-  if (record.otp == otp) {
-    console.log('otp matched-----------------------');
-    delete otpStore[email];
-    return res.json({ success: true, message: 'OTP verified successfully' });
-  } else {
-    return res.status(400).json({ success: false, message: 'Invalid OTP' });
+    // OTP matches, update lastLogin and clear activeOtp
+    user.lastLogin = new Date();
+    // user.activeOtp = null; // Clear the OTP after successful verification
+    await user.save();
+
+    // Respond with success
+    res.json({
+      success: true,
+      message: 'OTP verified successfully',
+      data: { userId: user.id }
+    });
+  } catch (error) {
+    console.error('Error verifying OTP:', error);
+    res.status(500).json({ success: false, message: 'Internal Server Error' });
   }
 });
 
-// API to fetch User data by custom 'id'
 app.get('/api/users/byId/:id', async (req, res) => {
   const { id } = req.params; 
   console.log('Requested User ID:', id);  
@@ -148,6 +183,39 @@ app.get('/api/users/byId/:id', async (req, res) => {
     }
   } catch (err) {
     console.error('Error fetching user by id:', err);
+    res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+});
+
+app.put('/api/update-user', async (req, res) => {
+  const { id, name, email, user_type, avatar } = req.body;
+
+  // Ensure the `id` is provided
+  if (!id) {
+    return res.status(400).json({ success: false, message: 'User ID is required' });
+  }
+
+  try {
+    // Find the user by ID
+    let user = await User.findOne({ id });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Update user details
+    user.name = name || user.name;           // Update if `name` is provided
+    user.email = email || user.email;       // Update if `email` is provided
+    user.user_type = user_type || user.user_type; // Update if `user_type` is provided
+    user.avatar = avatar || user.avatar;   // Update if `avatar` is provided
+    user.lastLogin = new Date();           // Update last login time
+
+    // Save the updated user in the database
+    await user.save();
+
+    res.json({ success: true, message: 'User updated successfully', data: user });
+  } catch (err) {
+    console.error('Error updating user:', err);
     res.status(500).json({ success: false, message: 'Internal Server Error' });
   }
 });
@@ -176,21 +244,20 @@ app.get('/api/transactions', async (req, res) => {
 });
 
 
-app.get('/api/getGame', (req, res) => {
-  // Dummy game data
-  const gameData = {
-    id: 1,
-    name: 'Space Adventure',
-    genre: 'Action',
-    releaseDate: '2024-01-15',
-    developer: 'Galactic Studios',
-    rating: 4.8,
-    platforms: ['PC', 'PlayStation', 'Xbox'],
-    description: 'Explore the galaxy, battle aliens, and conquer new worlds in this action-packed space adventure game.',
-  };
+app.get('/api/games', async (req, res) => {
+  try {
+    const games = await Game.findOne(); // Fetch the first document in the collection
+    console.log('Fetched games from database:', games);
 
-  // Send response with dummy data
-  res.json({ success: true, data: gameData });
+    if (games) {
+      res.status(200).json({ success: true, data: games.data });
+    } else {
+      res.status(404).json({ success: false, message: 'No games found' });
+    }
+  } catch (err) {
+    console.error('Error fetching games:', err);
+    res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
 });
 
 app.get('/api/getTournament', (req, res) => {
